@@ -4,9 +4,11 @@ appendToDisplay = (input) => {
     display.value += input;
 }
 
-// backspace = (input) =>{
-//     display.value -= input;
-// }
+backspace = (input) => {
+    console.log(display.value);
+    display.value = display.value.slice(0, -1);
+    console.log(display.value); 
+}
 
 clearDisplay = () => {
     display.value = "";
