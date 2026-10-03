@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from backend.models import User
 from backend.database import get_db
+from backend.security import hash_password, verify_password
 
 
 class UserDetails(BaseModel):
@@ -20,10 +21,15 @@ class UserDetails(BaseModel):
 
 
 class UserDetailsResponse(BaseModel):
-    id : int 
+    id: int 
     username: str
     email: str
     created_at: datetime
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
 
 app = FastAPI()
@@ -34,8 +40,20 @@ async def root():
 
 
 @app.post("/login")
-async def login(username: Annotated[str, Form()], password: Annotated[str, Form()]):
-    return {"username": username}
+async def login(
+    login_details: LoginRequest,
+    db: Session = Depends(get_db)
+    ):
+    stmt = select(User.password_hash).where(User.username == login_details.username)
+    password_hash = db.execute(stmt).scalar_one_or_none()
+
+    if password_hash is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    if verify_password(login_details.password, password_hash):
+        return {"username": login_details.username}
+
+    raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 @app.post("/users", response_model=UserDetailsResponse)
@@ -46,7 +64,7 @@ async def users(
     user = User()
     user.username = user_details.username
     user.email = user_details.email  
-    user.password_hash = user_details.password #for now, will be changed later
+    user.password_hash = hash_password(user_details.password)
     user.created_at = datetime.now()
 
     db.add(user)
