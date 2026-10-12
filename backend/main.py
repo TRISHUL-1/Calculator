@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from backend.database.models import User, UserSession
 from backend.database.database import get_db
 from backend.security import hash_password, verify_password
+from backend.dependencies import get_current_user
 
 
 class UserDetails(BaseModel):
@@ -144,24 +145,21 @@ async def users(
 
 @app.get("/me")
 async def me(
-    session_id: Annotated[str | None, Cookie()] = None,
-    db: Session = Depends(get_db)
+    current_user: User = Depends(get_current_user)
     ):
-    if session_id is None:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    stmt = select(UserSession).where(
-        UserSession.session_id == session_id, 
-        UserSession.expires_at > datetime.now())
-
-    session = db.execute(stmt).scalar_one_or_none()
-
-    if session is None:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    
     
     return {
-        "username" : session.user.username,
+        "username" : current_user.username,
         "message" : "Session is valid"
+    }
+
+
+@app.get("/protected")      # Temporary Endpoint
+async def protected(
+    current_user: User = Depends(get_current_user)
+):
+    return {
+        "message": "You have access",
+        "user_id": current_user.id,
+        "username": current_user.username
     }
