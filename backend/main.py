@@ -1,12 +1,15 @@
-from fastapi import FastAPI, Form, Depends, HTTPException
-from pydantic import BaseModel
 from typing import Annotated
-from datetime import datetime
-from sqlalchemy import select
+from datetime import datetime, timedelta
+import secrets
+
+from fastapi import FastAPI, Depends, HTTPException, Response, Cookie
+from pydantic import BaseModel
+from sqlalchemy import select, delete
 from sqlalchemy.orm import Session
-from sqlalchemy.exc import IntegrityError
-from backend.models import User
-from backend.database import get_db
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+
+from backend.database.models import User, UserSession
+from backend.database.database import get_db
 from backend.security import hash_password, verify_password
 
 
@@ -42,18 +45,76 @@ async def root():
 @app.post("/login")
 async def login(
     login_details: LoginRequest,
-    db: Session = Depends(get_db)
+    response: Response,
+    db: Session = Depends(get_db),
     ):
-    stmt = select(User.password_hash).where(User.username == login_details.username)
-    password_hash = db.execute(stmt).scalar_one_or_none()
+    stmt = select(User).where(User.username == login_details.username)
+    user = db.execute(stmt).scalar_one_or_none()
 
-    if password_hash is None:
+    if user is None:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    if verify_password(login_details.password, password_hash):
-        return {"username": login_details.username}
+    if not verify_password(login_details.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
-    raise HTTPException(status_code=401, detail="Unauthorized")
+    session_id = secrets.token_urlsafe(32)
+
+    user_session = UserSession()
+    user_session.session_id = session_id
+    user_session.user_id = user.id
+    user_session.created_at = user.created_at
+    user_session.expires_at = datetime.now() + timedelta(days=7)
+
+    db.add(user_session)
+    try:
+        db.commit()
+
+        response.set_cookie(
+                            key="session_id", 
+                            value=session_id, 
+                            httponly=True, 
+                            samesite="lax", 
+                            max_age=604800,
+                            secure=False    # For local development secure=False, in production secure=True
+                            )
+    
+    except IntegrityError as e:
+        db.rollback()
+        print(e)
+        raise HTTPException(status_code=500, detail="Could not create session")
+
+    return {
+        "username": login_details.username,
+        "session_created": True
+        }
+
+
+@app.post("/logout")
+async def logout(
+    response: Response,
+    session_id: Annotated[str | None, Cookie()] = None,
+    db: Session = Depends(get_db)
+):
+
+    if session_id is None:
+        return {"message": "Successfully logged out"}
+    
+    stmt = delete(UserSession).where(UserSession.session_id == session_id)
+    result = db.execute(stmt)
+
+    try:
+        db.commit()
+        response.delete_cookie(
+            key="session_id",
+            httponly=True,
+            samesite="lax",
+            secure=False    # For local development secure=False, in production secure=True
+            )
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Please try again later")
+
+    return {"message": "Successfully logged out"}
 
 
 @app.post("/users", response_model=UserDetailsResponse)
@@ -79,3 +140,28 @@ async def users(
         raise HTTPException(status_code=409, detail="Username Already exists")
 
     return user
+
+
+@app.get("/me")
+async def me(
+    session_id: Annotated[str | None, Cookie()] = None,
+    db: Session = Depends(get_db)
+    ):
+    if session_id is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    stmt = select(UserSession).where(
+        UserSession.session_id == session_id, 
+        UserSession.expires_at > datetime.now())
+
+    session = db.execute(stmt).scalar_one_or_none()
+
+    if session is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    
+    
+    return {
+        "username" : session.user.username,
+        "message" : "Session is valid"
+    }

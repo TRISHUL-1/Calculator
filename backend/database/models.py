@@ -12,11 +12,12 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, nullable=False)
     username: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)
-    email: Mapped[str] = mapped_column(String(100))
+    email: Mapped[str] = mapped_column(String(100), nullable=True)
     password_hash: Mapped[str] = mapped_column(String(100), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False)
 
     calculations: Mapped[list["Calculation"]] = relationship(back_populates="user")
+    sessions: Mapped[list["UserSession"]] = relationship(back_populates="user")
 
 
 class Calculation(Base):
@@ -31,3 +32,13 @@ class Calculation(Base):
     user: Mapped["User"] = relationship(back_populates="calculations")
 
 
+class UserSession(Base):
+    __tablename__ = "sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, nullable=False)
+    session_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False)
+
+    user: Mapped["User"] = relationship(back_populates="sessions")
